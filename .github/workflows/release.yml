@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+
+          if ($version -notmatch "^\d+\.\d+\.\d+$") {
+              throw "Tag must use vMAJOR.MINOR.PATCH, for example v1.0.0"
+          }
+
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Locate 7-Zip
+        shell: pwsh
+        run: |
+          $sevenZip = "${env:ProgramFiles}\7-Zip\7z.exe"
+
+          if (-not (Test-Path $sevenZip)) {
+              throw "7-Zip was not found: $sevenZip"
+          }
+
+          "SEVEN_ZIP=$sevenZip" >> $env:GITHUB_ENV
+
+      - name: Restore
+        run: dotnet restore WinUIMacro.slnx
+
+      - name: Test
+        run: >
+          dotnet test
+          WinUIMacro.Engine.Tests/WinUIMacro.Engine.Tests.csproj
+          -c Release
+          -p:Platform=x64
+          --no-restore
+
+      - name: Publish framework-dependent package
+        shell: pwsh
+        run: |
+          dotnet publish WinUIMacro/WinUIMacro.csproj `
+            -c Release `
+            -p:Platform=x64 `
+            -p:PublishProfile=win-x64 `
+            -p:Version=$env:VERSION `
+            -p:AssemblyVersion="${env:VERSION}.0" `
+            -p:FileVersion="${env:VERSION}.0" `
+            -p:SevenZipExecutable="$env:SEVEN_ZIP"
+
+      - name: Publish self-contained package
+        shell: pwsh
+        run: |
+          dotnet publish WinUIMacro/WinUIMacro.csproj `
+            -c Release `
+            -p:Platform=x64 `
+            -p:PublishProfile=win-x64-self-contained `
+            -p:Version=$env:VERSION `
+            -p:AssemblyVersion="${env:VERSION}.0" `
+            -p:FileVersion="${env:VERSION}.0" `
+            -p:SevenZipExecutable="$env:SEVEN_ZIP"
+
+      - name: Verify packages
+        shell: pwsh
+        run: |
+          $packages = @(
+              "artifacts/WinUIMacro-$env:VERSION-win-x64.7z",
+              "artifacts/WinUIMacro-$env:VERSION-win-x64-self-contained.7z"
+          )
+
+          foreach ($package in $packages) {
+              if (-not (Test-Path $package)) {
+                  throw "Missing release package: $package"
+              }
+          }
+
+          Get-ChildItem artifacts/*.7z
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          ## 下载说明
+
+          - ``WinUIMacro-$env:VERSION-win-x64.7z``：非自包含版，需要安装 .NET Desktop Runtime 和 Windows App Runtime。
+          - ``WinUIMacro-$env:VERSION-win-x64-self-contained.7z``：自包含版，已经包含所需运行时，文件体积较大。
+          "@
+
+          gh release create "${{ github.ref_name }}" `
+            "artifacts/WinUIMacro-$env:VERSION-win-x64.7z" `
+            "artifacts/WinUIMacro-$env:VERSION-win-x64-self-contained.7z" `
+            --verify-tag `
+            --title "WinUIMacro $env:VERSION" `
+            --notes $notes `
+            --generate-notes

@@ -1,0 +1,15 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="WinUIMacro.Engine/WinUIMacro.Engine.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="WinUIMacro.Engine.Tests/WinUIMacro.Engine.Tests.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="WinUIMacro/WinUIMacro.csproj">
+    <Platform Project="x64" />
+    <Deploy />
+  </Project>
+</Solution>

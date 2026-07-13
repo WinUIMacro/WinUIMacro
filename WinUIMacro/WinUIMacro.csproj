@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <OutputType>WinExe</OutputType>
+
+    <!-- WinUI 3 -->
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+
+    <!-- Project Options -->
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>WinUIMacro</RootNamespace>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <!-- App Options -->
+    <UseRidGraph>true</UseRidGraph>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <PublishProfile>win-$(Platform).pubxml</PublishProfile>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>Assets\TrayIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2270" />
+    <!-- H.NotifyIcon.WinUI transitively references Windows App SDK 1.6; suppress its old build assets. -->
+    <PackageReference
+      Include="Microsoft.WindowsAppSDK"
+      Version="1.6.250108002"
+      ExcludeAssets="all"
+    />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.2.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.2.1" />
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WinUIMacro.Engine\WinUIMacro.Engine.csproj" />
+  </ItemGroup>
+
+  <Target
+    Name="CopyWinUIAssetsToPublishDirectory"
+    AfterTargets="Publish"
+    BeforeTargets="CreateSevenZipArchive"
+  >
+    <ItemGroup>
+      <WinUIPublishPri
+        Include="$(TargetDir)$(AssemblyName).pri"
+        Condition="Exists('$(TargetDir)$(AssemblyName).pri')"
+      />
+      <WinUIPublishXbf Include="$(TargetDir)**\*.xbf" />
+      <WinUIPublishContent Include="$(TargetDir)Assets\**\*" />
+    </ItemGroup>
+
+    <RemoveDir Directories="$(PublishDir)Assets;$(PublishDir)Views" />
+    <Copy
+      SourceFiles="@(WinUIPublishPri)"
+      DestinationFolder="$(PublishDir)"
+      SkipUnchangedFiles="true"
+    />
+    <Copy
+      SourceFiles="@(WinUIPublishXbf)"
+      DestinationFiles="@(WinUIPublishXbf->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true"
+    />
+    <Copy
+      SourceFiles="@(WinUIPublishContent)"
+      DestinationFiles="@(WinUIPublishContent->'$(PublishDir)Assets\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true"
+    />
+  </Target>
+
+  <Target
+    Name="CreateSevenZipArchive"
+    AfterTargets="Publish"
+    Condition="'$(CreateSevenZipArchive)' == 'true'"
+  >
+    <PropertyGroup>
+      <SevenZipExecutable
+        Condition="'$(SevenZipExecutable)' == '' and Exists('$(ProgramFiles)\7-Zip\7z.exe')"
+        >$(ProgramFiles)\7-Zip\7z.exe</SevenZipExecutable>
+      <SevenZipExecutable
+        Condition="'$(SevenZipExecutable)' == '' and Exists('$(ProgramFiles(x86))\7-Zip\7z.exe')"
+        >$(ProgramFiles(x86))\7-Zip\7z.exe</SevenZipExecutable>
+      <SevenZipArchiveDirectory>$(MSBuildProjectDirectory)\..\artifacts</SevenZipArchiveDirectory>
+      <SevenZipArchivePath>$(SevenZipArchiveDirectory)\$(AssemblyName)-$(Version)-$(RuntimeIdentifier)$(SevenZipArchiveSuffix).7z</SevenZipArchivePath>
+      <SevenZipStagingDirectory>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)sevenzip</SevenZipStagingDirectory>
+      <SevenZipStagingAppDirectory>$(SevenZipStagingDirectory)\$(AssemblyName)</SevenZipStagingAppDirectory>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <SevenZipPublishedFile Include="$(PublishDir)**\*" Exclude="$(PublishDir)**\*.pdb" />
+    </ItemGroup>
+
+    <Error
+      Condition="'$(SevenZipExecutable)' == ''"
+      Text="7-Zip was not found. Install 7-Zip or pass /p:SevenZipExecutable=&quot;C:\path\to\7z.exe&quot;."
+    />
+    <MakeDir Directories="$(SevenZipArchiveDirectory)" />
+    <RemoveDir Directories="$(SevenZipStagingDirectory)" />
+    <MakeDir Directories="$(SevenZipStagingAppDirectory)" />
+    <Copy
+      SourceFiles="@(SevenZipPublishedFile)"
+      DestinationFiles="@(SevenZipPublishedFile->'$(SevenZipStagingAppDirectory)\%(RecursiveDir)%(Filename)%(Extension)')"
+    />
+    <Delete Files="$(SevenZipArchivePath)" />
+    <Exec
+      Command="&quot;$(SevenZipExecutable)&quot; a -t7z -mx=9 &quot;$(SevenZipArchivePath)&quot; .\$(AssemblyName)"
+      WorkingDirectory="$(SevenZipStagingDirectory)"
+    />
+    <RemoveDir Directories="$(SevenZipStagingDirectory)" />
+    <Message Importance="high" Text="Created archive: $(SevenZipArchivePath)" />
+  </Target>
+</Project>

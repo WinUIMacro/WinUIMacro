@@ -1,0 +1,7 @@
+.vs/
+.codex/
+.agents/
+artifacts/
+**/bin/
+**/obj/
+*.user
