@@ -1,5 +1,4 @@
-using System.ComponentModel;
-using System.Runtime.InteropServices;
+// 将回调排队投递到引擎拥有的 Win32 消息线程。
 using System.Runtime.Versioning;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -7,23 +6,25 @@ using WinUIMacro.Engine.Win32.Window;
 
 namespace WinUIMacro.Engine.Win32.Messaging;
 
-/// <summary>Posts callbacks to the engine message thread.</summary>
+/// <summary>将回调投递到引擎消息线程。</summary>
 [SupportedOSPlatform("windows5.1.2600")]
-public sealed class Win32ThreadDispatcher : IDisposable
+internal sealed class Win32ThreadDispatcher : IDisposable
 {
     private const uint DispatchMessage = 0x8002;
 
     private readonly LinkedList<WorkItem> _queue = new();
     private readonly Lock _sync = new();
-    private readonly MessageOnlyWindow _window;
+    private readonly NativeHostWindow _window;
     private bool _disposed;
 
-    public Win32ThreadDispatcher(MessageOnlyWindow window)
+    /// <summary>创建向指定宿主窗口线程投递工作的调度器。</summary>
+    public Win32ThreadDispatcher(NativeHostWindow window)
     {
         _window = window;
         window.MessageReceived += OnMessageReceived;
     }
 
+    /// <summary>将操作投递到宿主窗口线程并异步等待执行结果。</summary>
     public Task InvokeAsync(Action action)
     {
         ArgumentNullException.ThrowIfNull(action);
@@ -45,6 +46,7 @@ public sealed class Win32ThreadDispatcher : IDisposable
         return item.Completion.Task;
     }
 
+    /// <summary>停止接收工作并使尚未执行的调用失败。</summary>
     public void Dispose()
     {
         _window.VerifyAccess();
@@ -69,10 +71,7 @@ public sealed class Win32ThreadDispatcher : IDisposable
             handle == 0
             || !PInvoke.PostMessage(new HWND(handle), DispatchMessage, default, default)
         )
-            throw new Win32Exception(
-                Marshal.GetLastPInvokeError(),
-                "PostMessage failed while dispatching engine work."
-            );
+            throw Win32ExceptionFactory.Create(nameof(PInvoke.PostMessage));
     }
 
     private void OnMessageReceived(HWND window, uint message, WPARAM wParam, LPARAM lParam)
@@ -106,6 +105,7 @@ public sealed class Win32ThreadDispatcher : IDisposable
 
     private sealed record WorkItem(Action Action)
     {
+        /// <summary>获取调用完成、失败或取消时更新的任务源。</summary>
         internal TaskCompletionSource Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }

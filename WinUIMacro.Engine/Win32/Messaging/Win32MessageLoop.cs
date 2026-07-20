@@ -1,5 +1,4 @@
-using System.ComponentModel;
-using System.Runtime.InteropServices;
+// 在创建原生窗口的线程上运行 Win32 消息循环。
 using System.Runtime.Versioning;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -8,13 +7,13 @@ using WinUIMacro.Engine.Win32.Window;
 namespace WinUIMacro.Engine.Win32.Messaging;
 
 /// <summary>
-/// Runs the message loop for one <see cref="MessageOnlyWindow"/> on its owner thread.
+/// 在 <see cref="NativeHostWindow"/> 所属线程上运行对应的消息循环。
 /// </summary>
 [SupportedOSPlatform("windows5.1.2600")]
-public sealed unsafe class Win32MessageLoop(MessageOnlyWindow messageWindow)
+internal sealed unsafe class Win32MessageLoop(NativeHostWindow messageWindow)
 {
     private const uint StopMessage = 0x8001;
-    private readonly MessageOnlyWindow _messageWindow = messageWindow;
+    private readonly NativeHostWindow _messageWindow = messageWindow;
 
     public void Run()
     {
@@ -24,7 +23,7 @@ public sealed unsafe class Win32MessageLoop(MessageOnlyWindow messageWindow)
         {
             var result = PInvoke.GetMessage(out var message, HWND.Null, 0, 0);
             if (result.Value == -1)
-                throw CreateLastWin32Exception(nameof(PInvoke.GetMessage));
+                throw Win32ExceptionFactory.Create(nameof(PInvoke.GetMessage));
             if (result.Value == 0)
                 return;
             if (message.message == StopMessage && (nint)message.hwnd.Value == _messageWindow.Handle)
@@ -43,10 +42,7 @@ public sealed unsafe class Win32MessageLoop(MessageOnlyWindow messageWindow)
         if (!PInvoke.PostMessage(new HWND(handle), StopMessage, default, default))
         {
             if (_messageWindow.Handle != 0)
-                throw CreateLastWin32Exception(nameof(PInvoke.PostMessage));
+                throw Win32ExceptionFactory.Create(nameof(PInvoke.PostMessage));
         }
     }
-
-    private static Win32Exception CreateLastWin32Exception(string apiName) =>
-        new(Marshal.GetLastPInvokeError(), string.Concat(apiName, " failed."));
 }

@@ -1,14 +1,15 @@
-using WinUIMacro.Engine.Models;
+// 封装宏回放失败时的宏定义和异常信息。
+using WinUIMacro.Contracts;
 
 namespace WinUIMacro.Engine.Playback;
 
-/// <summary>Reports a macro playback failure.</summary>
-public sealed class MacroPlaybackFailedEventArgs(MacroDefinition macro, Exception exception)
+/// <summary>报告宏回放失败。</summary>
+internal sealed class MacroPlaybackFailedEventArgs(MacroDefinition macro, Exception exception)
     : EventArgs
 {
-    /// <summary>Gets the macro that failed.</summary>
+    /// <summary>获取回放失败的宏。</summary>
     public MacroDefinition Macro { get; } = macro;
 
-    /// <summary>Gets the playback exception.</summary>
+    /// <summary>获取回放异常。</summary>
     public Exception Exception { get; } = exception;
 }

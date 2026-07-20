@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- UI 项目承载 WinUI 页面、视图模型和引擎 IPC 客户端。 -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>WinUIMacro.UI</AssemblyName>
+    <RootNamespace>WinUIMacro.UI</RootNamespace>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <PublishProfile>win-$(Platform).pubxml</PublishProfile>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationIcon>..\WinUIMacro\Assets\TrayIcon.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2270" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.2.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.2.1" />
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WinUIMacro.Contracts\WinUIMacro.Contracts.csproj" />
+    <ProjectReference Include="..\WinUIMacro.Engine\WinUIMacro.Engine.csproj" />
+  </ItemGroup>
+
+  <Target Name="CopyWinUIAssetsToPublishDirectory" AfterTargets="Publish">
+    <ItemGroup>
+      <WinUIPublishPri Include="$(TargetDir)$(AssemblyName).pri" Condition="Exists('$(TargetDir)$(AssemblyName).pri')" />
+      <WinUIPublishXbf Include="@(ApplicationDefinition);@(Page)">
+        <XbfSourcePath>$(TargetDir)%(RelativeDir)%(Filename).xbf</XbfSourcePath>
+        <XbfDestinationPath>$(PublishDir)%(RelativeDir)%(Filename).xbf</XbfDestinationPath>
+      </WinUIPublishXbf>
+    </ItemGroup>
+    <RemoveDir Directories="$(PublishDir)Views" />
+    <Copy SourceFiles="@(WinUIPublishPri)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(WinUIPublishXbf->'%(XbfSourcePath)')" DestinationFiles="@(WinUIPublishXbf->'%(XbfDestinationPath)')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

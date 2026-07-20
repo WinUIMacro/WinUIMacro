@@ -8,8 +8,8 @@ WinUIMacro 是一款面向 Windows 的轻量级键鼠宏工具，可以录制、
 - 编辑录制序列并调整回放模式
 - 支持单次、按住和切换三种回放模式
 - 使用全局键盘按键或鼠标侧键触发宏
-- 关闭主窗口后继续在系统托盘运行
-- 将宏与触发绑定保存在程序目录，便于便携使用和备份
+- 关闭主窗口后退出 UI 进程，宏引擎继续在系统托盘运行
+- 将宏与触发绑定保存在程序目录，普通权限和管理员权限共享同一份数据
 
 ## 用户指南
 
@@ -34,7 +34,9 @@ WinUIMacro 是一款面向 Windows 的轻量级键鼠宏工具，可以录制、
 2. 将压缩包完整解压到一个具有写入权限的目录。不要直接在压缩包内运行，也不建议解压到 `Program Files`。
 3. 运行目录中的 `WinUIMacro.exe`。
 
-关闭主窗口后，程序会继续在系统托盘中运行。可以通过托盘图标重新打开主窗口或彻底退出程序。
+关闭主窗口后，`WinUIMacro.UI.exe` 会完全退出，`WinUIMacro.exe` 宏引擎继续在系统托盘中运行。可以通过托盘图标重新创建主窗口或彻底退出程序。
+
+如果需要控制以管理员权限运行的程序，请右键以管理员身份运行 `WinUIMacro.exe`。Engine 会保留管理员权限，但编辑界面仍由 Explorer 以普通权限启动，因此宏节点拖拽不会进入提升权限的 WinUI 进程。不要直接启动 `WinUIMacro.UI.exe`。
 
 ### 创建和录制宏
 
@@ -66,7 +68,7 @@ WinUIMacro 是一款面向 Windows 的轻量级键鼠宏工具，可以录制、
 
 ### 数据、备份与升级
 
-所有用户数据都保存在程序目录下：
+普通运行和管理员运行共享程序目录下的同一份用户数据：
 
 ```text
 Data\Macro\
@@ -74,10 +76,11 @@ Data\Macro\
 
 宏以 JSON 文件保存，触发绑定保存在 `bindings.toml` 中。
 
-- 备份：退出 WinUIMacro 后复制整个 `Data` 目录。
-- 恢复：退出 WinUIMacro 后，将备份的 `Data` 目录复制回程序目录。
-- 升级：解压新版本并保留原有 `Data` 目录。不要在没有备份的情况下删除旧程序目录。
-- 卸载：从托盘退出程序，然后删除程序目录。删除 `Data` 目录会同时删除所有宏和绑定。
+- 备份/恢复：退出 WinUIMacro 后复制程序目录中的 `Data`，恢复时放回原位置。
+- 升级：解压新版本时保留原有 `Data`。
+- 卸载：从托盘退出程序后删除程序目录。
+
+曾使用管理员独立工作区的版本可能在 `C:\ProgramData\WinUIMacro\Data\Macro` 留有宏；退出程序后可手动合并到程序目录的 `Data\Macro`，注意不要覆盖同名文件。
 
 程序遇到损坏或不受支持的宏文件时会跳过该文件并显示错误，不会主动删除原文件。
 
@@ -97,47 +100,58 @@ Data\Macro\
 - WinUI 3 所需的 Windows SDK 和开发组件
 - [7-Zip](https://www.7-zip.org/)，用于生成发布压缩包
 
-发布目标会自动查找以下位置：
+Host 项目的发布目标会自动查找以下位置：
 
 ```text
 C:\Program Files\7-Zip\7z.exe
 C:\Program Files (x86)\7-Zip\7z.exe
 ```
 
-如果 7-Zip 位于其他目录，可以在发布命令后追加：
+如果 7-Zip 位于其他目录，可以在 `dotnet publish` 后追加参数：
 
 ```powershell
 -p:SevenZipExecutable="D:\Tools\7-Zip\7z.exe"
 ```
+
+### 项目边界
+
+| 项目 | 应实现的内容 | 对外公开的内容 |
+| --- | --- | --- |
+| `WinUIMacro.Contracts` | 宏与输入数据模型、稳定键值映射、Host/UI IPC 消息和传输协议 | 仅跨进程或跨程序集共享的数据类型、消息类型与 `PipeConnection`；不包含存储、Win32 或 UI 行为 |
+| `WinUIMacro.Engine` | 引擎线程、录制与回放、宏和绑定持久化、Raw Input、SendInput、托盘及本地 IPC 所需的 Win32 能力 | Host/UI 实际调用的运行时、存储结果和少量进程级 Win32 入口；录制器、回放控制器、消息窗口等实现保持 `internal` |
+| `WinUIMacro.UI` | WinUI 启动、窗口与页面、编辑状态、展示逻辑和 Engine Pipe 客户端 | 仅 XAML 创建或绑定所需的应用、窗口、页面、ViewModel 和属性；IPC 客户端及 UI 内部协调保持 `internal` |
+| `WinUIMacro` | 进程入口、单实例与权限边界、Engine 生命周期、工作区协调、IPC 路由和 UI 拉起 | 不提供库 API，宿主类型全部保持 `internal` |
+
+依赖方向固定为 `Engine -> Contracts`、`UI -> Contracts + Engine`、`WinUIMacro -> Contracts + Engine`。Host 不引用 UI 程序集，只负责启动 `WinUIMacro.UI.exe`；Contracts 不反向依赖任何实现项目。
 
 ### 还原、构建与测试
 
 ```powershell
 dotnet restore WinUIMacro.slnx
 dotnet build WinUIMacro.slnx -p:Platform=x64
-dotnet test WinUIMacro.Engine.Tests\WinUIMacro.Engine.Tests.csproj -p:Platform=x64
+dotnet test WinUIMacro.Tests\WinUIMacro.Tests.csproj -p:Platform=x64
 ```
 
 ### 发布
 
 | 发布配置 | 部署方式 | 发布目录 | 压缩包 |
 | --- | --- | --- | --- |
-| `win-x64` | 非自包含 | `publish` | `WinUIMacro-1.0.0-win-x64.7z` |
-| `win-x64-self-contained` | 自包含 | `publish-self-contained` | `WinUIMacro-1.0.0-win-x64-self-contained.7z` |
+| `win-x64` | 非自包含 | `artifacts\publish\WinUIMacro` | `WinUIMacro-1.0.0-win-x64.7z` |
+| `win-x64-self-contained` | 自包含 | `artifacts\publish-self-contained\WinUIMacro` | `WinUIMacro-1.0.0-win-x64-self-contained.7z` |
 
 生成非自包含发布包：
 
 ```powershell
-dotnet publish WinUIMacro\WinUIMacro.csproj -c Release -p:Platform=x64
+dotnet publish .\WinUIMacro\WinUIMacro.csproj -c Release -p:Platform=x64 -p:PublishProfile=win-x64
 ```
 
 生成自包含发布包：
 
 ```powershell
-dotnet publish WinUIMacro\WinUIMacro.csproj -c Release -p:Platform=x64 -p:PublishProfile=win-x64-self-contained
+dotnet publish .\WinUIMacro\WinUIMacro.csproj -c Release -p:Platform=x64 -p:PublishProfile=win-x64-self-contained
 ```
 
-两种配置生成的 7z 文件都会保存在仓库根目录的 `artifacts` 目录中，彼此不会覆盖。
+Host 项目会在发布过程中自动发布 UI、合并两个进程的输出，并在仓库根目录的 `artifacts` 目录生成对应的 7z 文件；不需要额外的 PowerShell 脚本。只需要发布目录而不生成压缩包时，可追加 `-p:CreateSevenZipArchive=false`。
 
 ## License
 

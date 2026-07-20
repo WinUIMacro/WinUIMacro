@@ -1,14 +1,19 @@
 <Solution>
   <Configurations>
+    <!-- 解决方案包含宿主、UI、Contracts、引擎和测试项目。 -->
     <Platform Name="x64" />
   </Configurations>
   <Project Path="WinUIMacro.Engine/WinUIMacro.Engine.csproj">
     <Platform Project="x64" />
   </Project>
-  <Project Path="WinUIMacro.Engine.Tests/WinUIMacro.Engine.Tests.csproj">
+  <Project Path="WinUIMacro.Contracts/WinUIMacro.Contracts.csproj" />
+  <Project Path="WinUIMacro/WinUIMacro.csproj">
     <Platform Project="x64" />
   </Project>
-  <Project Path="WinUIMacro/WinUIMacro.csproj">
+  <Project Path="WinUIMacro.Tests/WinUIMacro.Tests.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="WinUIMacro.UI/WinUIMacro.UI.csproj">
     <Platform Project="x64" />
     <Deploy />
   </Project>

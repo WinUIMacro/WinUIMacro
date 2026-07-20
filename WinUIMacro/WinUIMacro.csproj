@@ -1,90 +1,122 @@
-<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- Host 项目负责启动引擎宿主并按会话管理 UI 进程。 -->
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <OutputType>WinExe</OutputType>
-
-    <!-- WinUI 3 -->
-    <UseWinUI>true</UseWinUI>
-    <EnableMsixTooling>false</EnableMsixTooling>
-    <WindowsPackageType>None</WindowsPackageType>
-    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
-
-    <!-- Project Options -->
-    <Nullable>enable</Nullable>
-    <LangVersion>latest</LangVersion>
-    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>WinUIMacro</AssemblyName>
     <RootNamespace>WinUIMacro</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\TrayIcon.ico</ApplicationIcon>
+    <!-- 应用仅提供简体中文，托管依赖只发布对应的卫星资源。 -->
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+    <!-- Host 是合并发布的唯一入口；默认使用框架依赖的 x64 配置。 -->
+    <PublishProfile>win-x64</PublishProfile>
     <Version>1.0.0</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
-
-    <!-- App Options -->
-    <UseRidGraph>true</UseRidGraph>
-    <Platforms>x64</Platforms>
-    <PlatformTarget>x64</PlatformTarget>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
-    <PublishProfile>win-$(Platform).pubxml</PublishProfile>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <ApplicationIcon>Assets\TrayIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2270" />
-    <!-- H.NotifyIcon.WinUI transitively references Windows App SDK 1.6; suppress its old build assets. -->
-    <PackageReference
-      Include="Microsoft.WindowsAppSDK"
-      Version="1.6.250108002"
-      ExcludeAssets="all"
-    />
-    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.2.0" />
-    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.2.1" />
-    <Manifest Include="$(ApplicationManifest)" />
-  </ItemGroup>
-
-  <ItemGroup>
+    <ProjectReference Include="..\WinUIMacro.Contracts\WinUIMacro.Contracts.csproj" />
     <ProjectReference Include="..\WinUIMacro.Engine\WinUIMacro.Engine.csproj" />
   </ItemGroup>
 
+  <!-- Host 与 UI 是两个进程，发布时需要把两份输出合并到同一目录。 -->
   <Target
-    Name="CopyWinUIAssetsToPublishDirectory"
+    Name="PublishUiToCombinedDirectory"
     AfterTargets="Publish"
-    BeforeTargets="CreateSevenZipArchive"
+    Condition="'$(IsCrossTargetingBuild)' != 'true'"
   >
-    <ItemGroup>
-      <WinUIPublishPri
-        Include="$(TargetDir)$(AssemblyName).pri"
-        Condition="Exists('$(TargetDir)$(AssemblyName).pri')"
-      />
-      <WinUIPublishXbf Include="$(TargetDir)**\*.xbf" />
-      <WinUIPublishContent Include="$(TargetDir)Assets\**\*" />
-    </ItemGroup>
+    <PropertyGroup>
+      <UiProject>$(MSBuildProjectDirectory)\..\WinUIMacro.UI\WinUIMacro.UI.csproj</UiProject>
+      <UiPublishDirectory>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)ui-publish\', '$(MSBuildProjectDirectory)'))</UiPublishDirectory>
+      <UiPublishProperties>Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier);PublishProfile=$(UiPublishProfile);PublishDir=$(UiPublishDirectory);SelfContained=$(SelfContained);WindowsAppSDKSelfContained=$(WindowsAppSDKSelfContained);SatelliteResourceLanguages=$(SatelliteResourceLanguages);DebugType=$(DebugType);DebugSymbols=$(DebugSymbols);PublishSingleFile=$(PublishSingleFile);PublishReadyToRun=$(PublishReadyToRun);PublishTrimmed=$(PublishTrimmed);DeleteExistingFiles=true</UiPublishProperties>
+    </PropertyGroup>
 
-    <RemoveDir Directories="$(PublishDir)Assets;$(PublishDir)Views" />
+    <RemoveDir Directories="$(UiPublishDirectory)" />
+    <MakeDir Directories="$(UiPublishDirectory)" />
+    <MSBuild Projects="$(UiProject)" Targets="Publish" Properties="$(UiPublishProperties)" />
+
+    <ItemGroup>
+      <UiPublishedFile
+        Include="$(UiPublishDirectory)**\*"
+        Exclude="$(UiPublishDirectory)**\*.pdb"
+      />
+    </ItemGroup>
     <Copy
-      SourceFiles="@(WinUIPublishPri)"
-      DestinationFolder="$(PublishDir)"
+      SourceFiles="@(UiPublishedFile)"
+      DestinationFiles="@(UiPublishedFile->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
       SkipUnchangedFiles="true"
     />
-    <Copy
-      SourceFiles="@(WinUIPublishXbf)"
-      DestinationFiles="@(WinUIPublishXbf->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
-      SkipUnchangedFiles="true"
+    <ItemGroup>
+      <PublishedPdb Include="$(PublishDir)**\*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(PublishedPdb)" />
+    <RemoveDir Directories="$(UiPublishDirectory)" />
+    <Message Importance="high" Text="Published UI into: $(PublishDir)" />
+  </Target>
+
+  <!-- 精简 Windows App SDK 发布负载：只保留简体中文资源并移除未使用的重启代理。 -->
+  <Target Name="PruneUnusedWindowsAppSdkPublishAssets" AfterTargets="PublishUiToCombinedDirectory">
+    <ItemGroup>
+      <NonChineseMuiFile Include="$(PublishDir)**\*.mui" Exclude="$(PublishDir)zh-CN\**\*.mui" />
+      <NonChineseMuiDirectory Include="@(NonChineseMuiFile->'%(RootDir)%(Directory)')" />
+    </ItemGroup>
+    <RemoveDir Directories="@(NonChineseMuiDirectory)" />
+    <Delete Files="$(PublishDir)RestartAgent.exe" />
+  </Target>
+
+  <!-- 根目录只保留入口 EXE，其余 Host、UI 和运行时文件放入 App 子目录。 -->
+  <Target
+    Name="ArrangePublishedApplicationLayout"
+    AfterTargets="PruneUnusedWindowsAppSdkPublishAssets"
+  >
+    <PropertyGroup>
+      <PublishLayoutRoot>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath('$(PublishDir)'))))</PublishLayoutRoot>
+      <PublishedAppDirectory>$(PublishLayoutRoot)App\</PublishedAppDirectory>
+    </PropertyGroup>
+    <RemoveDir Directories="$(PublishedAppDirectory)" />
+    <MakeDir Directories="$(PublishedAppDirectory)" />
+    <ItemGroup>
+      <PublishedApplicationFile
+        Include="$(PublishLayoutRoot)**\*"
+        Exclude="$(PublishLayoutRoot)$(AssemblyName).exe;$(PublishedAppDirectory)**\*"
+      />
+      <PublishedApplicationDirectory
+        Include="@(PublishedApplicationFile->'%(RootDir)%(Directory)')"
+        Exclude="$(PublishLayoutRoot);$(PublishedAppDirectory)"
+      />
+    </ItemGroup>
+    <Move
+      SourceFiles="@(PublishedApplicationFile)"
+      DestinationFiles="@(PublishedApplicationFile->'$(PublishedAppDirectory)%(RecursiveDir)%(Filename)%(Extension)')"
     />
-    <Copy
-      SourceFiles="@(WinUIPublishContent)"
-      DestinationFiles="@(WinUIPublishContent->'$(PublishDir)Assets\%(RecursiveDir)%(Filename)%(Extension)')"
-      SkipUnchangedFiles="true"
+    <RemoveDir Directories="@(PublishedApplicationDirectory)" />
+    <RemoveDir Directories="$(PublishLayoutRoot)Microsoft.UI.Xaml" />
+    <CreateAppHost
+      AppHostSourcePath="$(AppHostSourcePath)"
+      AppHostDestinationPath="$(PublishLayoutRoot)$(AssemblyName).exe"
+      AppBinaryName="App\$(AssemblyName)$(TargetExt)"
+      IntermediateAssembly="@(IntermediateAssembly->'%(FullPath)')"
+      WindowsGraphicalUserInterface="$(_UseWindowsGraphicalUserInterface)"
+      Retries="$(CopyRetryCount)"
+      RetryDelayMilliseconds="$(CopyRetryDelayMilliseconds)"
+      DisableCetCompat="$(_DisableCetCompat)"
+      DotNetSearchLocations="AppRelative;Global"
+      AppRelativeDotNet="App"
     />
+    <Message Importance="high" Text="Arranged application files under: $(PublishedAppDirectory)" />
   </Target>
 
   <Target
     Name="CreateSevenZipArchive"
-    AfterTargets="Publish"
+    AfterTargets="ArrangePublishedApplicationLayout"
     Condition="'$(CreateSevenZipArchive)' == 'true'"
   >
     <PropertyGroup>
@@ -96,8 +128,8 @@
         >$(ProgramFiles(x86))\7-Zip\7z.exe</SevenZipExecutable>
       <SevenZipArchiveDirectory>$(MSBuildProjectDirectory)\..\artifacts</SevenZipArchiveDirectory>
       <SevenZipArchivePath>$(SevenZipArchiveDirectory)\$(AssemblyName)-$(Version)-$(RuntimeIdentifier)$(SevenZipArchiveSuffix).7z</SevenZipArchivePath>
-      <SevenZipStagingDirectory>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)sevenzip</SevenZipStagingDirectory>
-      <SevenZipStagingAppDirectory>$(SevenZipStagingDirectory)\$(AssemblyName)</SevenZipStagingAppDirectory>
+      <SevenZipStagingDirectory>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)sevenzip\</SevenZipStagingDirectory>
+      <SevenZipStagingAppDirectory>$(SevenZipStagingDirectory)$(AssemblyName)</SevenZipStagingAppDirectory>
     </PropertyGroup>
 
     <ItemGroup>
@@ -122,5 +154,17 @@
     />
     <RemoveDir Directories="$(SevenZipStagingDirectory)" />
     <Message Importance="high" Text="Created archive: $(SevenZipArchivePath)" />
+  </Target>
+  <Target
+    Name="PublishSelfContainedVariant"
+    AfterTargets="CreateSevenZipArchive"
+    Condition="'$(PublishBoth)' == 'true' and '$(PublishProfile)' == 'win-x64'"
+  >
+    <MSBuild
+      Projects="$(MSBuildProjectFullPath)"
+      Targets="Publish"
+      BuildInParallel="false"
+      Properties="Configuration=$(Configuration);Platform=x64;RuntimeIdentifier=win-x64;PublishProfile=win-x64-self-contained;PublishBoth=false"
+    />
   </Target>
 </Project>

@@ -1,5 +1,4 @@
-using System.ComponentModel;
-using System.Runtime.InteropServices;
+// 使用高精度可等待计时器提供可取消的毫秒级延时。
 using System.Runtime.Versioning;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
@@ -7,10 +6,10 @@ using Windows.Win32;
 namespace WinUIMacro.Engine.Win32.Timing;
 
 /// <summary>
-/// Provides reusable, cancellable millisecond delays backed by a high-resolution waitable timer.
+/// 使用高精度可等待计时器提供可复用、可取消的毫秒级延时。
 /// </summary>
 [SupportedOSPlatform("windows10.0.17134")]
-public sealed unsafe class HighResolutionDelay : IDisposable
+internal sealed unsafe class HighResolutionDelay : IDisposable
 {
     private const long MaximumTimerMilliseconds = long.MaxValue / TimeSpan.TicksPerMillisecond;
     private const uint CreateWaitableTimerHighResolution = 0x00000002;
@@ -22,7 +21,7 @@ public sealed unsafe class HighResolutionDelay : IDisposable
     private readonly NativeWaitHandle _timerWaitHandle;
     private bool _disposed;
 
-    /// <summary>Initializes a reusable high-resolution waitable timer.</summary>
+    /// <summary>初始化可复用的高精度可等待计时器。</summary>
     public HighResolutionDelay()
     {
         _timerHandle = PInvoke.CreateWaitableTimerEx(
@@ -34,9 +33,9 @@ public sealed unsafe class HighResolutionDelay : IDisposable
 
         if (_timerHandle.IsInvalid)
         {
-            var error = Marshal.GetLastPInvokeError();
+            var exception = Win32ExceptionFactory.Create(nameof(PInvoke.CreateWaitableTimerEx));
             _timerHandle.Dispose();
-            throw new Win32Exception(error, "CreateWaitableTimerEx failed.");
+            throw exception;
         }
 
         _timerWaitHandle = new NativeWaitHandle(
@@ -44,7 +43,7 @@ public sealed unsafe class HighResolutionDelay : IDisposable
         );
     }
 
-    /// <summary>Blocks the calling playback thread for the requested number of milliseconds.</summary>
+    /// <summary>阻塞调用方的回放线程指定的毫秒数。</summary>
     public void Delay(long milliseconds, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(milliseconds);
@@ -59,7 +58,7 @@ public sealed unsafe class HighResolutionDelay : IDisposable
                 var timerMilliseconds = Math.Min(remainingMilliseconds, MaximumTimerMilliseconds);
                 var dueTime = checked(-(timerMilliseconds * TimeSpan.TicksPerMillisecond));
                 if (!PInvoke.SetWaitableTimer(_timerHandle, in dueTime, 0, null, null, false))
-                    throw CreateLastWin32Exception(nameof(PInvoke.SetWaitableTimer));
+                    throw Win32ExceptionFactory.Create(nameof(PInvoke.SetWaitableTimer));
 
                 if (WaitHandle.WaitAny([_timerWaitHandle, cancellationToken.WaitHandle]) == 1)
                     throw new OperationCanceledException(cancellationToken);
@@ -73,7 +72,7 @@ public sealed unsafe class HighResolutionDelay : IDisposable
         }
     }
 
-    /// <summary>Closes the timer handle.</summary>
+    /// <summary>关闭计时器句柄。</summary>
     public void Dispose()
     {
         if (_disposed)
@@ -82,11 +81,7 @@ public sealed unsafe class HighResolutionDelay : IDisposable
         _disposed = true;
         _timerWaitHandle.Dispose();
         _timerHandle.Dispose();
-        GC.SuppressFinalize(this);
     }
-
-    private static Win32Exception CreateLastWin32Exception(string apiName) =>
-        new(Marshal.GetLastPInvokeError(), string.Concat(apiName, " failed."));
 
     private sealed class NativeWaitHandle : WaitHandle
     {

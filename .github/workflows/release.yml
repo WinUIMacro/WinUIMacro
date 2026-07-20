@@ -12,6 +12,7 @@ jobs:
   release:
     name: Build and publish
     runs-on: windows-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -47,13 +48,48 @@ jobs:
       - name: Restore
         run: dotnet restore WinUIMacro.slnx
 
+      - name: Install Windows App SDK runtime
+        shell: pwsh
+        run: |
+          $runtimeDirectory = Join-Path `
+            $env:USERPROFILE `
+            ".nuget\packages\microsoft.windowsappsdk.runtime\2.2.0\tools\MSIX\win10-x64"
+          $packages = @(
+            "Microsoft.WindowsAppRuntime.2.msix",
+            "Microsoft.WindowsAppRuntime.Main.2.msix",
+            "Microsoft.WindowsAppRuntime.Singleton.2.msix",
+            "Microsoft.WindowsAppRuntime.DDLM.2.msix"
+          )
+
+          foreach ($package in $packages) {
+              $packagePath = Join-Path $runtimeDirectory $package
+              if (-not (Test-Path $packagePath)) {
+                  throw "Windows App SDK runtime package was not restored: $packagePath"
+              }
+              Add-AppxPackage -Path $packagePath -ForceUpdateFromAnyVersion
+          }
+
       - name: Test
+        timeout-minutes: 10
         run: >
           dotnet test
-          WinUIMacro.Engine.Tests/WinUIMacro.Engine.Tests.csproj
+          WinUIMacro.Tests/WinUIMacro.Tests.csproj
           -c Release
           -p:Platform=x64
           --no-restore
+          --logger "console;verbosity=detailed"
+          --blame-hang
+          --blame-hang-timeout 2m
+          --blame-hang-dump-type mini
+
+      - name: Upload test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-diagnostics
+          path: WinUIMacro.Tests/TestResults
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Publish framework-dependent package
         shell: pwsh

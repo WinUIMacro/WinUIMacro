@@ -1,12 +1,13 @@
+// 负责宏 JSON 文件的扫描、校验、原子保存和删除。
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using WinUIMacro.Engine.Models;
+using WinUIMacro.Contracts;
 
 namespace WinUIMacro.Engine.Storage;
 
-/// <summary>Loads and atomically saves name-owned macro JSON files.</summary>
-public sealed class MacroLibraryService(MacroDataPaths paths)
+/// <summary>加载并原子保存以名称拥有的宏 JSON 文件。</summary>
+internal sealed class MacroLibraryService(MacroDataPaths paths)
 {
     private const int SchemaVersion = 1;
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -19,17 +20,17 @@ public sealed class MacroLibraryService(MacroDataPaths paths)
     private readonly MacroDataPaths _paths =
         paths ?? throw new ArgumentNullException(nameof(paths));
 
-    /// <summary>Loads all valid macro files without changing invalid files.</summary>
+    /// <summary>加载所有有效宏文件，并为重复 UUID 的宏重新生成标识。</summary>
     public async Task<MacroLibraryLoadResult> LoadAsync(
         CancellationToken cancellationToken = default
     )
     {
         Directory.CreateDirectory(_paths.MacroDirectory);
-        List<MacroDefinition> macros = [];
+        List<LoadedMacro> loadedMacros = [];
         List<string> errors = [];
-        Dictionary<Guid, (MacroDefinition Macro, string FileName)> macrosById = [];
         HashSet<Guid> duplicateIds = [];
 
+        // 单个文件出错只记录到结果中，避免一份损坏宏阻止其他宏加载。
         foreach (
             var path in Directory
                 .EnumerateFiles(_paths.MacroDirectory, "*.json")
@@ -59,18 +60,7 @@ public sealed class MacroLibraryService(MacroDataPaths paths)
                     document.LastEditedAt
                 );
                 ValidateMacro(macro);
-                if (macrosById.TryGetValue(macro.Id, out var existing))
-                {
-                    macros.Remove(existing.Macro);
-                    duplicateIds.Add(macro.Id);
-                    throw new InvalidDataException(
-                        $"{name} 与 {existing.FileName}的UUID {macro.Id} 重复。"
-                    );
-                }
-                if (duplicateIds.Contains(macro.Id))
-                    throw new InvalidDataException($"UUID {macro.Id} 与其他宏重复。");
-                macrosById.Add(macro.Id, (macro, Path.GetFileName(path)));
-                macros.Add(macro);
+                loadedMacros.Add(new LoadedMacro(macro, path, json));
             }
             catch (Exception exception)
                 when (exception
@@ -85,10 +75,70 @@ public sealed class MacroLibraryService(MacroDataPaths paths)
             }
         }
 
+        var usedIds = loadedMacros.Select(item => item.Macro.Id).ToHashSet();
+        foreach (
+            var group in loadedMacros
+                .GroupBy(item => item.Macro.Id)
+                .Where(group => group.Count() > 1)
+        )
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            duplicateIds.Add(group.Key);
+            var duplicates = group.ToArray();
+            try
+            {
+                foreach (var duplicate in duplicates)
+                {
+                    Guid replacementId;
+                    do replacementId = Guid.NewGuid();
+                    while (!usedIds.Add(replacementId));
+
+                    duplicate.Macro = duplicate.Macro with { Id = replacementId };
+                    await WriteMacroAsync(duplicate.Path, duplicate.Macro, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception)
+                when (exception is IOException or UnauthorizedAccessException)
+            {
+                foreach (var duplicate in duplicates)
+                {
+                    duplicate.IsValid = false;
+                    try
+                    {
+                        await AtomicFile
+                            .WriteAllTextAsync(
+                                duplicate.Path,
+                                duplicate.OriginalJson,
+                                cancellationToken
+                            )
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception rollbackException)
+                        when (rollbackException is IOException or UnauthorizedAccessException)
+                    {
+                        errors.Add(
+                            $"{duplicate.Macro.Name}.json 恢复原 UUID 失败：{rollbackException.Message}"
+                        );
+                    }
+                }
+
+                errors.Add($"重复 ID 自动修复失败：{exception.Message}");
+                continue;
+            }
+
+            var names = duplicates.Select(item => item.Macro.Name).ToArray();
+            errors.Add(
+                $"{FormatMacroNames(names)} 的 ID 重复，已为这些宏重新生成 UUID；"
+                    + "如果之前这个 ID 绑定了触发键，请重新绑定。"
+            );
+        }
+
+        var macros = loadedMacros.Where(item => item.IsValid).Select(item => item.Macro).ToArray();
         return new MacroLibraryLoadResult(macros, errors, duplicateIds);
     }
 
-    /// <summary>Saves a macro and removes its previous name-owned file after the new write succeeds.</summary>
+    /// <summary>保存宏；新文件写入成功后再删除旧名称对应的文件。</summary>
     public async Task<MacroDefinition> SaveAsync(
         MacroDefinition macro,
         string? previousName = null,
@@ -103,18 +153,12 @@ public sealed class MacroLibraryService(MacroDataPaths paths)
 
         var saved = macro with { Name = name, LastEditedAt = DateTimeOffset.UtcNow };
         ValidateMacro(saved);
-        var document = new MacroDocument(
-            SchemaVersion,
-            saved.Id,
-            saved.Mode,
-            saved.Nodes,
-            saved.LastEditedAt
-        );
-        var json = JsonSerializer.Serialize(document, JsonOptions);
-        await WriteAtomicAsync(targetPath, json, cancellationToken).ConfigureAwait(false);
+        // 先写临时文件再替换目标文件，避免程序中断时留下半份 JSON。
+        await WriteMacroAsync(targetPath, saved, cancellationToken).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(previousName))
         {
+            // 改名时新文件已经落盘，旧文件只在确认路径不同后删除。
             var previousPath = GetPath(MacroNameValidator.Normalize(previousName));
             if (
                 !string.Equals(previousPath, targetPath, StringComparison.OrdinalIgnoreCase)
@@ -140,7 +184,7 @@ public sealed class MacroLibraryService(MacroDataPaths paths)
         return saved;
     }
 
-    /// <summary>Deletes the name-owned file for a macro.</summary>
+    /// <summary>删除宏名称对应的文件。</summary>
     public void Delete(string name, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -151,6 +195,31 @@ public sealed class MacroLibraryService(MacroDataPaths paths)
 
     private string GetPath(string name) =>
         Path.Combine(_paths.MacroDirectory, string.Concat(name, ".json"));
+
+    private static async Task WriteMacroAsync(
+        string path,
+        MacroDefinition macro,
+        CancellationToken cancellationToken
+    )
+    {
+        var document = new MacroDocument(
+            SchemaVersion,
+            macro.Id,
+            macro.Mode,
+            macro.Nodes,
+            macro.LastEditedAt
+        );
+        await AtomicFile
+            .WriteAllTextAsync(
+                path,
+                JsonSerializer.Serialize(document, JsonOptions),
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    private static string FormatMacroNames(IReadOnlyList<string> names) =>
+        names.Count == 2 ? $"{names[0]} 与 {names[1]}" : string.Join("、", names);
 
     private void EnsureNameAvailable(string targetPath, string? previousName)
     {
@@ -191,6 +260,7 @@ public sealed class MacroLibraryService(MacroDataPaths paths)
             throw new InvalidDataException("宏节点值不能为空。");
         if (node.Type == MacroNodeType.Delay)
         {
+            // 延时使用不受区域设置影响的非负整数毫秒保存。
             if (
                 !long.TryParse(
                     node.Value,
@@ -207,26 +277,6 @@ public sealed class MacroLibraryService(MacroDataPaths paths)
             throw new InvalidDataException($"节点 {node.Type}:{node.Value} 不受支持。");
     }
 
-    private static async Task WriteAtomicAsync(
-        string path,
-        string content,
-        CancellationToken cancellationToken
-    )
-    {
-        var temporaryPath = string.Concat(path, ".", Guid.NewGuid().ToString("N"), ".tmp");
-        try
-        {
-            await File.WriteAllTextAsync(temporaryPath, content, cancellationToken)
-                .ConfigureAwait(false);
-            File.Move(temporaryPath, path, overwrite: true);
-        }
-        finally
-        {
-            if (File.Exists(temporaryPath))
-                File.Delete(temporaryPath);
-        }
-    }
-
     private sealed record MacroDocument(
         [property: JsonRequired] int SchemaVersion,
         [property: JsonRequired] Guid Id,
@@ -234,4 +284,12 @@ public sealed class MacroLibraryService(MacroDataPaths paths)
         [property: JsonRequired] IReadOnlyList<MacroNode>? Nodes,
         [property: JsonRequired] DateTimeOffset LastEditedAt
     );
+
+    private sealed class LoadedMacro(MacroDefinition macro, string path, string originalJson)
+    {
+        internal MacroDefinition Macro { get; set; } = macro;
+        internal string Path { get; } = path;
+        internal string OriginalJson { get; } = originalJson;
+        internal bool IsValid { get; set; } = true;
+    }
 }

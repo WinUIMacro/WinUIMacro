@@ -1,28 +1,22 @@
-using System.ComponentModel;
-using System.Runtime.InteropServices;
+// 提供物理像素虚拟桌面坐标与当前鼠标位置的 Win32 访问。
 using System.Runtime.Versioning;
 using Windows.Win32;
 
 namespace WinUIMacro.Engine.Win32.Coordinates;
 
 /// <summary>
-/// Provides physical-pixel virtual desktop coordinate helpers.
+/// 提供物理像素虚拟桌面坐标辅助方法。
 /// </summary>
 [SupportedOSPlatform("windows5.0")]
-public static class DesktopCoordinates
+internal static class DesktopCoordinates
 {
-    /// <summary>
-    /// Gets the current mouse cursor position in virtual desktop coordinates.
-    /// </summary>
-    /// <returns>The current physical-pixel cursor position.</returns>
-    /// <exception cref="Win32Exception">Thrown when Windows cannot read the cursor position.</exception>
+    /// <summary>获取当前鼠标指针在虚拟桌面中的坐标。</summary>
+    /// <returns>当前物理像素鼠标坐标。</returns>
+    /// <exception cref="Win32Exception">Windows 无法读取鼠标位置时引发。</exception>
     public static DesktopPoint GetCursorPosition()
     {
         if (!PInvoke.GetCursorPos(out var point))
-        {
-            var error = Marshal.GetLastPInvokeError();
-            throw new Win32Exception(error, "GetCursorPos failed.");
-        }
+            throw Win32ExceptionFactory.Create(nameof(PInvoke.GetCursorPos));
 
         return new DesktopPoint(point.X, point.Y);
     }

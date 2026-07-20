@@ -1,20 +1,20 @@
-using System.ComponentModel;
+// 注册键盘和鼠标 Raw Input，并从隐藏窗口读取原始输入。
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Input;
-using WinUIMacro.Engine.Win32.Input;
+using WinUIMacro.Contracts;
 using WinUIMacro.Engine.Win32.Window;
 
 namespace WinUIMacro.Engine.Win32.RawInput;
 
 /// <summary>
-/// Owns the process-wide keyboard and mouse Raw Input registration for one message-only window.
-/// Only one active instance may exist in the process, and it must be disposed before its window.
+/// 为一个消息窗口管理进程级键盘和鼠标 Raw Input 注册。
+/// 进程中只能存在一个活动实例，并且必须先于其窗口释放。
 /// </summary>
 [SupportedOSPlatform("windows5.1.2600")]
-public sealed unsafe class RawInputService : IDisposable
+internal sealed unsafe class RawInputService : IDisposable
 {
     private const uint WindowMessageInput = 0x00FF;
     private const uint RawInputTypeMouse = 0;
@@ -26,12 +26,13 @@ public sealed unsafe class RawInputService : IDisposable
     private static readonly uint RawInputDataOffset = (uint)
         Marshal.OffsetOf<RAWINPUT>(nameof(RAWINPUT.data));
 
-    private readonly MessageOnlyWindow _window;
+    private readonly NativeHostWindow _window;
     private readonly RawInputTranslator _translator = new();
     private bool _disposed;
 
-    public RawInputService(MessageOnlyWindow window)
+    public RawInputService(NativeHostWindow window)
     {
+        // 先订阅窗口消息再注册设备，保证注册期间到达的输入不会丢失。
         _window = window;
         window.MessageReceived += OnWindowMessage;
 
@@ -57,7 +58,6 @@ public sealed unsafe class RawInputService : IDisposable
         _window.MessageReceived -= OnWindowMessage;
         _translator.Reset();
         _disposed = true;
-        GC.SuppressFinalize(this);
     }
 
     private void RegisterRawInput()
@@ -71,7 +71,7 @@ public sealed unsafe class RawInputService : IDisposable
         );
 
         if (!PInvoke.RegisterRawInputDevices(devices, 2, (uint)sizeof(RAWINPUTDEVICE)))
-            throw CreateLastWin32Exception(nameof(PInvoke.RegisterRawInputDevices));
+            throw Win32ExceptionFactory.Create(nameof(PInvoke.RegisterRawInputDevices));
     }
 
     private static void UnregisterRawInput()
@@ -81,7 +81,7 @@ public sealed unsafe class RawInputService : IDisposable
         devices[1] = CreateDevice(KeyboardUsage, RAWINPUTDEVICE_FLAGS.RIDEV_REMOVE, 0);
 
         if (!PInvoke.RegisterRawInputDevices(devices, 2, (uint)sizeof(RAWINPUTDEVICE)))
-            throw CreateLastWin32Exception(nameof(PInvoke.RegisterRawInputDevices));
+            throw Win32ExceptionFactory.Create(nameof(PInvoke.RegisterRawInputDevices));
     }
 
     private static RAWINPUTDEVICE CreateDevice(
@@ -108,6 +108,7 @@ public sealed unsafe class RawInputService : IDisposable
         if (lParam.Value == 0)
             return;
 
+        // 结构缓冲区同时覆盖键盘和鼠标数据，先校验拷贝长度再读取联合体成员。
         RAWINPUT rawInput = default;
         var bufferSize = (uint)sizeof(RAWINPUT);
         var buffer = new Span<byte>(&rawInput, sizeof(RAWINPUT));
@@ -120,11 +121,12 @@ public sealed unsafe class RawInputService : IDisposable
         );
 
         if (copiedBytes == uint.MaxValue)
-            throw CreateLastWin32Exception(nameof(PInvoke.GetRawInputData));
+            throw Win32ExceptionFactory.Create(nameof(PInvoke.GetRawInputData));
         if (copiedBytes < sizeof(RAWINPUTHEADER))
             return;
 
         var device = (nint)rawInput.header.hDevice.Value;
+        // Raw Input 头部决定后续使用键盘还是鼠标翻译路径。
         switch (rawInput.header.dwType)
         {
             case RawInputTypeKeyboard:
@@ -157,7 +159,4 @@ public sealed unsafe class RawInputService : IDisposable
     }
 
     private void Publish(InputOperation operation) => InputReceived?.Invoke(operation);
-
-    private static Win32Exception CreateLastWin32Exception(string apiName) =>
-        new(Marshal.GetLastPInvokeError(), string.Concat(apiName, " failed."));
 }

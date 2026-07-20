@@ -1,7 +1,8 @@
+// 校验既作为显示名称又作为 Windows 文件名的宏名称。
 namespace WinUIMacro.Engine.Storage;
 
-/// <summary>Validates macro names that are also Windows file names.</summary>
-public static class MacroNameValidator
+/// <summary>校验同时作为 Windows 文件名的宏名称。</summary>
+internal static class MacroNameValidator
 {
     private static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -29,7 +30,7 @@ public static class MacroNameValidator
         "LPT9",
     };
 
-    /// <summary>Validates and trims a macro name.</summary>
+    /// <summary>校验并去除宏名称首尾空白。</summary>
     public static string Normalize(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);

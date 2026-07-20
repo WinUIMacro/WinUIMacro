@@ -1,14 +1,16 @@
+// 将领域输入操作转换为 Win32 INPUT 并通过 SendInput 注入。
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Windows.Win32;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
+using WinUIMacro.Contracts;
 
 namespace WinUIMacro.Engine.Win32.Input;
 
-/// <summary>Injects keyboard and mouse operations through SendInput.</summary>
+/// <summary>通过 SendInput 注入键盘和鼠标操作。</summary>
 [SupportedOSPlatform("windows6.0.6000")]
-public static unsafe class InputInjector
+internal static unsafe class InputInjector
 {
     private const int WheelDelta = 120;
     private const uint XButton1 = 0x0001;
@@ -16,6 +18,7 @@ public static unsafe class InputInjector
 
     public static void Send(InputOperation operation)
     {
+        // 每次只注入一个操作，调用方负责按宏节点顺序驱动发送。
         var nativeInput = CreateNativeInput(operation);
         var sent = PInvoke.SendInput(1, &nativeInput, sizeof(INPUT));
         if (sent != 1)
